@@ -1,30 +1,63 @@
-#!/usr/bin/env python3
-"""Copy the bundled front-page image to the grader's output directory.
+"""Copy the bundled news image to the grader's output folder.
 
-The entry image (entry.png, in this repository) sums up the world's news
-of Sunday 22 November 2026. This program only places that image at
-/output/entry.png: it is deterministic, uses the standard library only,
-touches no network and calls no model. The image itself is drawn by
-generate_image.py (Pillow), kept in this repository for reference.
+The entry image already lives in this repository as entry.png, next to
+this script. The grader runs this program with no network, the repo
+mounted read-only, and a writable output directory. This script finds
+that directory from MAKEFUN_OUTPUT_DIR (falling back to /output),
+duplicates entry.png there byte for byte, and refuses to finish
+silently if the copy comes out a different size.
 """
 
 import os
-import shutil
 import sys
+from pathlib import Path
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-SOURCE = os.path.join(HERE, "entry.png")
+SOURCE_NAME = "entry.png"
+DEST_NAME = "entry.png"
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+CHUNK_SIZE = 1024 * 64
 
 
-def main():
-    if not os.path.isfile(SOURCE):
-        print("entry.png not found beside main.py", file=sys.stderr)
-        return 1
-    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
-    os.makedirs(out_dir, exist_ok=True)
-    target = os.path.join(out_dir, "entry.png")
-    shutil.copyfile(SOURCE, target)
-    print("wrote %s (%d bytes)" % (target, os.path.getsize(target)))
+def locate_source() -> Path:
+    here = Path(__file__).resolve().parent
+    candidate = here / SOURCE_NAME
+    if not candidate.is_file():
+        raise SystemExit(f"missing source image: {candidate}")
+    return candidate
+
+
+def locate_destination() -> Path:
+    raw_dir = os.environ.get("MAKEFUN_OUTPUT_DIR") or "/output"
+    folder = Path(raw_dir).expanduser()
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / DEST_NAME
+
+
+def duplicate(source: Path, target: Path) -> int:
+    total = 0
+    with source.open("rb") as reader, target.open("wb") as writer:
+        head = reader.read(len(PNG_SIGNATURE))
+        if head != PNG_SIGNATURE:
+            raise SystemExit("source image is not a PNG file")
+        writer.write(head)
+        total += len(head)
+        while True:
+            block = reader.read(CHUNK_SIZE)
+            if not block:
+                break
+            writer.write(block)
+            total += len(block)
+    if target.stat().st_size != source.stat().st_size:
+        target.unlink(missing_ok=True)
+        raise SystemExit("copied file size does not match the source")
+    return total
+
+
+def main() -> int:
+    source = locate_source()
+    target = locate_destination()
+    copied = duplicate(source, target)
+    print(f"wrote {target} ({copied} bytes)")
     return 0
 
 
